@@ -276,16 +276,17 @@ repo below.
 
 ## Gaps filed as beads in the `pact` repo
 
-1. The `pact` repo's own Release workflow (`.github/workflows/release.yml`)
-   never ran for tags 0.13.0 through 0.15.1: the tag-push events came
-   from automated `chore(version):` commits using the default
-   `GITHUB_TOKEN`, and GitHub Actions does not let a `GITHUB_TOKEN`-
-   authored push trigger further workflow runs. `gh release list`
-   stayed pinned at 0.12.0 while `git tag` and CI both moved on.
-2. `recount testify`'s session resolution has no fallback path for a
-   harness that runs subagents as nested transcripts under
-   `<session>/subagents/agent-<id>.jsonl` without exposing a
-   `PACT_HARNESS_SUBAGENT`-equivalent value — it silently attributes
-   the event to the top-level orchestrator session instead of refusing
-   or searching the `subagents/` directory by the agent id already
-   present in the ledger event.
+1. **pact-kum** — the `pact` repo's own Release workflow
+   (`.github/workflows/release.yml`) never ran for tags 0.13.0 through
+   0.15.1: the tag-push events came from automated `chore(version):`
+   commits using the default `GITHUB_TOKEN`, and GitHub Actions does
+   not let a `GITHUB_TOKEN`-authored push trigger further workflow
+   runs. `gh release list` stayed pinned at 0.12.0 while `git tag` and
+   CI both moved on.
+2. **pact-h8d** — `recount testify`'s session resolution has no
+   fallback path for a harness that runs subagents as nested
+   transcripts under `<session>/subagents/agent-<id>.jsonl` without
+   exposing a `PACT_HARNESS_SUBAGENT`-equivalent value — it silently
+   attributes the event to the top-level orchestrator session instead
+   of refusing or searching the `subagents/` directory by the agent id
+   already present in the ledger event.
