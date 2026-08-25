@@ -1,0 +1,62 @@
+# Changelog
+All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
+
+- - -
+## 0.1.0 - 2026-08-25
+#### Bug Fixes
+- **(engine)** don't reset vibrato phase on note trigger (modmill-89e) - (8407758) - Clement HUSSENOT-DESENONGES
+- **(parser)** patterns.rs use the corrected shared PATTERN_DATA_OFFSET - (9d19748) - Clement HUSSENOT-DESENONGES
+- **(parser)** correct TAG_OFFSET/PATTERN_DATA_OFFSET shared constants - (aa744b4) - Clement HUSSENOT-DESENONGES
+#### Documentation
+- post-mortem audit + testimony appendix - (da9bb28) - Clement HUSSENOT-DESENONGES
+- add real-world module collect/play instructions to README - (9357c1f) - Clement HUSSENOT-DESENONGES
+- note modmill-89e (vibrato phase reset) as fixed post-run - (bcf53c4) - Clement HUSSENOT-DESENONGES
+- finalize proving-ground report - (4732ac3) - Clement HUSSENOT-DESENONGES
+- add README with effect scope table and out-of-scope list - (1c57c0b) - Clement HUSSENOT-DESENONGES
+- fill in F1b/F1c liveness findings (DEAD capture, sweep gap) - (f69dc3a) - Clement HUSSENOT-DESENONGES
+- reference filed pact-repo bead ids (pact-kum, pact-h8d) - (d16c186) - Clement HUSSENOT-DESENONGES
+- draft proving-ground report (F1a, F2, F3 sections) - (e7aeb23) - Clement HUSSENOT-DESENONGES
+- document effect tick-timing folklore for ProTracker effects - (8ccbb3e) - Clement HUSSENOT-DESENONGES
+- document pattern/period table format notes - (3afaff0) - Clement HUSSENOT-DESENONGES
+- document ProTracker sample-header semantics and loop quirks - (1c4cc6f) - Clement HUSSENOT-DESENONGES
+#### Features
+- **(cli)** polish clap help text and add CI workflow - (2c3eed0) - Clement HUSSENOT-DESENONGES
+- **(effects)** implement vibrato (4xy) - (108644a) - Clement HUSSENOT-DESENONGES
+- **(effects)** implement portamento slide and tone-portamento (1xx/2xx/3xx) - (5848bf2) - Clement HUSSENOT-DESENONGES
+- **(engine)** implement arpeggio effect (0xy) - (21ef3a8) - Clement HUSSENOT-DESENONGES
+- **(engine)** wire D/B pattern-break and position-jump sequencing - (1f8ea72) - Clement HUSSENOT-DESENONGES
+- **(engine)** mixer/resampler + PAL timing + F effect - (8ecee5c) - Clement HUSSENOT-DESENONGES
+- **(engine/effects)** implement volume slide (Axy) - (733540b) - Clement HUSSENOT-DESENONGES
+- **(parser)** implement pattern cell-grid parsing - (878ae7c) - Clement HUSSENOT-DESENONGES
+- **(parser)** implement header parsing - (dd029a7) - Clement HUSSENOT-DESENONGES
+- **(parser)** implement sample-header parsing - (2993df7) - Clement HUSSENOT-DESENONGES
+- add scripts/fetch-mods.sh for real-world test modules - (6de122a) - Clement HUSSENOT-DESENONGES
+- pre-wire tick-based dispatch for the 4 remaining W3 effect beads - (4340567) - Clement HUSSENOT-DESENONGES
+- pre-wire shared parser/engine module skeleton for wave 2 - (16f5393) - Clement HUSSENOT-DESENONGES
+- scaffold modmill — spec, Cargo project, hand-crafted fixtures, pact plan - (3d3e7ec) - Clement HUSSENOT-DESENONGES
+#### Miscellaneous Chores
+- **(pact)** record appendix lease release - (9fd377f) - Clement HUSSENOT-DESENONGES
+- **(pact)** record epic closure - (4ff66ed) - Clement HUSSENOT-DESENONGES
+- **(pact)** record wave-4 CI coordination state -- all 16 beads closed - (3b73865) - Clement HUSSENOT-DESENONGES
+- **(pact)** record wave-4 README coordination state - (c559320) - Clement HUSSENOT-DESENONGES
+- **(pact)** record wave-3 arpeggio-r2 coordination state - (1d86cd6) - Clement HUSSENOT-DESENONGES
+- **(pact)** record lease-expiry/sweep observation and pact init refresh - (197e303) - Clement HUSSENOT-DESENONGES
+- **(pact)** sync the coordination protocol block - (e78855c) - Clement HUSSENOT-DESENONGES
+- **(pact)** record wave-3 vibrato coordination state (liveness demo) - (e40019b) - Clement HUSSENOT-DESENONGES
+- **(pact)** record wave-3 volume coordination state - (e257dd9) - Clement HUSSENOT-DESENONGES
+- **(pact)** record wave-3 portamento coordination state - (a72ea41) - Clement HUSSENOT-DESENONGES
+- **(pact)** re-close G2 after the planted gate-order test - (362c241) - Clement HUSSENOT-DESENONGES
+- **(pact)** record G2 reopen for the planted gate-order test - (f7b8cbb) - Clement HUSSENOT-DESENONGES
+- **(pact)** record wave-2 parser coordination state - (c97f3fa) - Clement HUSSENOT-DESENONGES
+- **(pact)** record wave-1 discovery coordination state - (59753e7) - Clement HUSSENOT-DESENONGES
+- **(pact)** sync the coordination protocol block - (495292b) - Clement HUSSENOT-DESENONGES
+- ignore transient per-agent worktree checkouts - (ef84856) - Clement HUSSENOT-DESENONGES
+- Use mise to use rsut - (a470aa1) - Clement HUSSENOT-DESENONGES
+- configure pre-commit - (9b4a8eb) - Clement HUSSENOT-DESENONGES
+- Root commit - (dc46b1f) - Clement HUSSENOT-DESENONGES
+#### Tests
+- pin golden WAV hashes for G2 render conformance - (14376a3) - Clement HUSSENOT-DESENONGES
+
+- - -
+
+Changelog generated by [cocogitto](https://github.com/cocogitto/cocogitto).
