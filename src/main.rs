@@ -46,7 +46,7 @@ fn main() -> anyhow::Result<()> {
         Command::Render { file, out } => {
             let bytes = fs::read(&file).with_context(|| format!("reading {}", file.display()))?;
             let module = parser::parse(&bytes)?;
-            engine::render_to_wav(&module, &out)
+            engine::render_to_wav(&module, &bytes, &out)
         }
     }
 }
