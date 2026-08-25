@@ -393,11 +393,16 @@ user]` — the kill, mid-file.
 5. **Vibrato phase-reset divergence from its own docs.**
    `docs/format-notes/effect-timing.md` states real ProTracker does
    *not* reset vibrato phase on a plain (non-retriggering) new note,
-   but `src/engine/mod.rs` resets `vibrato_phase = 0` on every note
+   but `src/engine/mod.rs` reset `vibrato_phase = 0` on every note
    trigger unconditionally. Found and flagged by w3-vibrato via pact
-   handoff; not fixed in this run (it's shared `mod.rs` code, out of
-   that bead's leased scope) — left as a named, open discrepancy for
-   whoever next touches note-trigger handling.
+   handoff; left open in the run itself (shared `mod.rs` code, out of
+   that bead's leased scope) and tracked as `modmill-89e`. **Fixed
+   post-run**: the reset line removed, with a regression test
+   (`vibrato_phase_is_not_reset_on_a_plain_new_note`) built from a
+   synthetic looped-sample `Module` rather than a new fixture file —
+   it compares row 2 of a retriggered-vibrato pattern against a fresh
+   single-row render of the same cell and asserts they differ (they'd
+   be byte-identical if phase were still being reset).
 6. **Orchestrator's own uncovered commits.** `pact audit --check
    commit-correlation` found 11 commits (all orchestrator-authored
    scaffolding: the wave-2 and wave-3 shared-skeleton pre-wiring) that
