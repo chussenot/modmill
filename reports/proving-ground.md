@@ -64,8 +64,51 @@ was mid-hold. The lease was deliberately left untouched afterward
 TTL, holding) → `DEAD` (past full TTL, reclaimable) — rather than
 manufacturing the state.
 
-[FILLED IN AFTER THE WAIT: exact ages, `pact lease ls`/activity-record
-snapshot, and the respawned `w3-arpeggio-r2`'s result.]
+The kill was confirmed by `TaskStop`'s own status transition
+(`completed` → `killed`) and by `pact lease ls` continuing to show the
+hold as `active` immediately afterward — pact has no process
+supervision, so a killed agent's lease reads as live until the TTL
+mechanism itself says otherwise, exactly as `pact doctor`'s own
+liveness model documents. The lease was then left completely alone
+(no `--steal`, no `pact lease sweep`) for the full default 45-minute
+TTL, real wall-clock time, so the DEAD transition would be genuine
+rather than manufactured:
+
+```
+13:26:53  w3-arpeggio  src/engine/effects/arpeggio.rs  acquired (default 45m TTL)
+13:26:xx  orchestrator kills the task (TaskStop) — bead barely claimed, no code written yet
+13:27–14:10  lease sits untouched; `pact lease ls` shows it `active` the whole time
+14:11:00  `pact lease ls` (no --all): "no active leases" — the hold is gone
+14:11:00  `pact lease ls --all`: "src/engine/effects/arpeggio.rs  expired by w3-arpeggio (7s ago)"
+```
+
+**This is the DEAD state, captured at the moment it happened** —
+but a field nuance worth naming honestly: `pact lease ls`'s own
+default view *removes* an expired hold from the active table the
+instant it crosses its TTL, rather than rendering it inline as `DEAD`
+the way the `pact ui` roster does (that distinction, and its
+`STALE`/`DEAD` states, live only in the TUI's `LIVE` column — see (c)
+below). Reaching for `pact lease sweep` immediately after, expecting
+it to be the mechanism that reclaims a dead hold, found **nothing to
+do**: `nothing to sweep — no lease here is held by an absent agent`.
+Sweep's actual job (per its own `--help`) is reclaiming holds still
+inside their TTL whose holder has gone quiet past half of it
+(`--suspect`), or holds already past TTL that `lease ls` has *not yet*
+self-filtered — neither condition existed here, because simple
+full-TTL expiry is handled by `lease ls` itself without sweep's
+involvement. **This is a real gap between the brief's expectation
+("sweep's ladder gets a real customer") and the field behavior**:
+the natural, do-nothing-and-wait path this run took never gives sweep
+a customer; only an active `--suspect` reclaim during the STALE
+window (before full TTL) would have. Left honest rather than staged,
+since manufacturing a second, separate SUSPECT scenario purely to
+give sweep something to do would be exactly the kind of engineered
+result the brief's own STALE guidance warns against.
+
+The bead was then respawned as `w3-arpeggio-r2`, which acquired the
+now-free path cleanly (no `--steal` needed, since the expired lease
+was already gone), implemented arpeggio correctly, and closed
+`modmill-4r0.10` citing the kill/respawn in its own close reason.
 
 ### (c) Simultaneous ACTIVE / IDLE / DEAD snapshot
 
@@ -80,7 +123,19 @@ inside the freshness window; `IDLE` = quiet past the window holding
 nothing; `STALE` = quiet past the window still holding; `DEAD` = past
 TTL on everything held).
 
-[FILLED IN AFTER THE WAIT: the computed snapshot.]
+Because arpeggio's DEAD window (13:27–14:11) landed in a quiet stretch
+with no other agent concurrently ACTIVE — every other wave-3 bead had
+already finished and released by ~13:31, and wave 4 (README/CI) is
+gated behind arpeggio's own close — a genuinely *simultaneous*
+ACTIVE+IDLE+DEAD snapshot did not occur naturally in this run's actual
+timeline. This is named honestly rather than papered over: capturing
+all three states in one instant would have required either running
+wave 3 with looser gating (so a wave-4 agent could be ACTIVE while
+arpeggio aged toward DEAD) or deliberately staggering an unrelated
+agent to sit IDLE during the wait — both of which are shapes the plan
+didn't call for. The two states that *did* co-occur naturally and are
+evidenced above: ACTIVE (every other wave-3 agent, until ~13:31) and
+DEAD (arpeggio, from ~14:11).
 
 ## F2 — Handoff
 
