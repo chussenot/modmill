@@ -11,21 +11,15 @@
 
 use anyhow::{bail, Context};
 
-use super::{Cell, Pattern, CHANNELS, ROWS_PER_PATTERN, TAG_OFFSET};
+use super::{Cell, Pattern, CHANNELS, PATTERN_DATA_OFFSET, ROWS_PER_PATTERN};
 
 const CELL_BYTES: usize = 4;
 const ROW_BYTES: usize = CHANNELS * CELL_BYTES;
 const PATTERN_BYTES: usize = ROWS_PER_PATTERN * ROW_BYTES;
 
-/// `mod.rs`'s `PATTERN_DATA_OFFSET`/`TAG_OFFSET` are short by 130 bytes:
-/// they account for the 20-byte name and 31*30 sample headers, but not the
-/// 1-byte song_length + 1-byte restart_position + 128-byte order table
-/// that sit between the sample headers and the "M.K." tag. Verified with
-/// `xxd fixtures/effects.mod`: the tag is at file offset 1080 and pattern
-/// data starts at 1084, not 950/954 as `mod.rs` computes. Flagged to the
-/// orchestrator and w2-header via pact (mod.rs is shared, not edited here);
-/// this local constant is the corrected offset used only by this module.
-const PATTERN_DATA_OFFSET: usize = TAG_OFFSET + 1 + 1 + 128 + 4;
+// The +130-byte offset bug this module worked around (see pact message
+// thread pact-msg-6328c061ca4716cd) has been fixed at the source in
+// `super::PATTERN_DATA_OFFSET`; this module now uses it directly.
 
 fn decode_cell(b: &[u8]) -> Cell {
     let (b0, b1, b2, b3) = (b[0], b[1], b[2], b[3]);
