@@ -27,6 +27,9 @@ use anyhow::Context;
 
 use crate::parser::{Module, CHANNELS, PATTERN_DATA_OFFSET, ROWS_PER_PATTERN};
 
+mod effects;
+use effects::sequencing::{decode_pattern_break_row, decode_position_jump};
+
 const SAMPLE_RATE: u32 = 44_100;
 const DEFAULT_SPEED: u32 = 6;
 const DEFAULT_BPM: f64 = 125.0;
@@ -95,100 +98,147 @@ pub fn render_to_wav(module: &Module, raw_bytes: &[u8], out: &Path) -> anyhow::R
     let mut elapsed_target: f64 = 0.0;
 
     let song_len = (module.header.song_length as usize).min(module.header.order.len());
-    for &block in &module.header.order[..song_len] {
+    let order_table_len = module.header.order.len();
+    // Order-table slot + row within its pattern. Indices rather than a
+    // `for` iterator because `D`/`B` can redirect either one.
+    let mut order_idx: usize = 0;
+    let mut row_idx: usize = 0;
+
+    while order_idx < song_len {
+        let block = module.header.order[order_idx];
         let Some(pattern) = module.patterns.get(block as usize) else {
+            order_idx += 1;
+            row_idx = 0;
             continue;
         };
-        for row in pattern {
-            for (ch_i, cell) in row.iter().enumerate() {
-                // Effect handling: only F (speed/tempo) is in scope.
-                match cell.effect {
-                    0x0 if cell.param == 0 => {} // no effect present
-                    0xF => {
-                        if cell.param < 0x20 {
-                            speed = cell.param as u32;
-                        } else {
-                            bpm = cell.param as f64;
-                        }
-                    }
-                    other => {
-                        let idx = other as usize;
-                        if !warned[idx] {
-                            eprintln!(
-                                "modmill: effect {other:X} is out of scope for this bead; \
-                                 playing note(s) without it"
-                            );
-                            warned[idx] = true;
-                        }
+        if row_idx >= pattern.len() {
+            // Jump target past this pattern's rows (e.g. a malformed D
+            // param) -- treat like falling off the end of the pattern.
+            order_idx += 1;
+            row_idx = 0;
+            continue;
+        }
+
+        let row = &pattern[row_idx];
+        // `D` (pattern break) / `B` (position jump): row-level, decided once
+        // per row regardless of which channel carries them. If both appear
+        // on the same row, `B` picks the destination pattern (order-table
+        // slot) and `D` picks the row within it -- inherited handoff on
+        // bead:modmill-4r0.6.
+        let mut pattern_break_row: Option<u8> = None;
+        let mut position_jump_slot: Option<u8> = None;
+
+        for (ch_i, cell) in row.iter().enumerate() {
+            // Effect handling: F (speed/tempo), D (pattern break), B (position jump).
+            match cell.effect {
+                0x0 if cell.param == 0 => {} // no effect present
+                0xF => {
+                    if cell.param < 0x20 {
+                        speed = cell.param as u32;
+                    } else {
+                        bpm = cell.param as f64;
                     }
                 }
-
-                // Note trigger: only when a period is present.
-                if cell.period != 0 {
-                    let instrument = if cell.sample != 0 {
-                        Some(cell.sample as usize)
-                    } else {
-                        channels[ch_i].sample_idx.map(|i| i + 1)
-                    };
-                    if let Some(instr) = instrument
-                        && instr >= 1
-                        && instr <= module.samples.len()
-                        && !pcm[instr - 1].is_empty()
-                    {
-                        let freq = AMIGA_CLOCK / (cell.period as f64 * 2.0);
-                        channels[ch_i] = Channel {
-                            sample_idx: Some(instr - 1),
-                            pos: 0.0,
-                            step: freq / SAMPLE_RATE as f64,
-                            volume: module.samples[instr - 1].volume,
-                            playing: true,
-                        };
+                0xD => pattern_break_row = Some(decode_pattern_break_row(cell.param)),
+                0xB => position_jump_slot = Some(decode_position_jump(cell.param)),
+                other => {
+                    let idx = other as usize;
+                    if !warned[idx] {
+                        eprintln!(
+                            "modmill: effect {other:X} is out of scope for this bead; \
+                             playing note(s) without it"
+                        );
+                        warned[idx] = true;
                     }
                 }
             }
 
-            // Row duration: `speed` ticks at `2.5 / bpm` seconds/tick.
-            let row_seconds = speed as f64 * (2.5 / bpm);
-            elapsed_target += row_seconds;
-            let target_frames = (elapsed_target * SAMPLE_RATE as f64).round() as u64;
-            let frames_this_row = target_frames.saturating_sub(frames_emitted);
-            frames_emitted = target_frames;
-
-            for _ in 0..frames_this_row {
-                let mut mixed: i32 = 0;
-                for ch in channels.iter_mut() {
-                    if !ch.playing {
-                        continue;
-                    }
-                    let Some(si) = ch.sample_idx else {
-                        continue;
+            // Note trigger: only when a period is present.
+            if cell.period != 0 {
+                let instrument = if cell.sample != 0 {
+                    Some(cell.sample as usize)
+                } else {
+                    channels[ch_i].sample_idx.map(|i| i + 1)
+                };
+                if let Some(instr) = instrument
+                    && instr >= 1
+                    && instr <= module.samples.len()
+                    && !pcm[instr - 1].is_empty()
+                {
+                    let freq = AMIGA_CLOCK / (cell.period as f64 * 2.0);
+                    channels[ch_i] = Channel {
+                        sample_idx: Some(instr - 1),
+                        pos: 0.0,
+                        step: freq / SAMPLE_RATE as f64,
+                        volume: module.samples[instr - 1].volume,
+                        playing: true,
                     };
-                    let data = &pcm[si];
-                    let i0 = ch.pos.floor() as usize;
-                    if data.is_empty() || i0 >= data.len() {
-                        ch.playing = false;
-                        continue;
-                    }
-                    let frac = ch.pos - i0 as f64;
-                    let s0 = data[i0] as f64;
-                    let s1 = if i0 + 1 < data.len() { data[i0 + 1] as f64 } else { s0 };
-                    let interp = s0 + (s1 - s0) * frac;
-                    let amp = interp * (ch.volume as f64 / 64.0) * 256.0;
-                    mixed += amp.round() as i32;
-
-                    ch.pos += ch.step;
-                    let sample = &module.samples[si];
-                    if sample.loop_len_bytes > 0 {
-                        let loop_end = (sample.loop_start_bytes + sample.loop_len_bytes) as f64;
-                        while ch.pos >= loop_end {
-                            ch.pos -= sample.loop_len_bytes as f64;
-                        }
-                    } else if ch.pos >= data.len() as f64 {
-                        ch.playing = false;
-                    }
                 }
-                let clamped = mixed.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
-                writer.write_sample(clamped)?;
+            }
+        }
+
+        // Row duration: `speed` ticks at `2.5 / bpm` seconds/tick.
+        let row_seconds = speed as f64 * (2.5 / bpm);
+        elapsed_target += row_seconds;
+        let target_frames = (elapsed_target * SAMPLE_RATE as f64).round() as u64;
+        let frames_this_row = target_frames.saturating_sub(frames_emitted);
+        frames_emitted = target_frames;
+
+        for _ in 0..frames_this_row {
+            let mut mixed: i32 = 0;
+            for ch in channels.iter_mut() {
+                if !ch.playing {
+                    continue;
+                }
+                let Some(si) = ch.sample_idx else {
+                    continue;
+                };
+                let data = &pcm[si];
+                let i0 = ch.pos.floor() as usize;
+                if data.is_empty() || i0 >= data.len() {
+                    ch.playing = false;
+                    continue;
+                }
+                let frac = ch.pos - i0 as f64;
+                let s0 = data[i0] as f64;
+                let s1 = if i0 + 1 < data.len() { data[i0 + 1] as f64 } else { s0 };
+                let interp = s0 + (s1 - s0) * frac;
+                let amp = interp * (ch.volume as f64 / 64.0) * 256.0;
+                mixed += amp.round() as i32;
+
+                ch.pos += ch.step;
+                let sample = &module.samples[si];
+                if sample.loop_len_bytes > 0 {
+                    let loop_end = (sample.loop_start_bytes + sample.loop_len_bytes) as f64;
+                    while ch.pos >= loop_end {
+                        ch.pos -= sample.loop_len_bytes as f64;
+                    }
+                } else if ch.pos >= data.len() as f64 {
+                    ch.playing = false;
+                }
+            }
+            let clamped = mixed.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+            writer.write_sample(clamped)?;
+        }
+
+        // Advance to the next row, honoring any D/B decided on this row.
+        match (position_jump_slot, pattern_break_row) {
+            (Some(slot), maybe_break_row) => {
+                order_idx = (slot as usize).min(order_table_len.saturating_sub(1));
+                row_idx = maybe_break_row.unwrap_or(0) as usize;
+            }
+            (None, Some(break_row)) => {
+                // Break with no jump always targets the *next* order-table
+                // entry; falling off the end ends the song.
+                order_idx += 1;
+                row_idx = break_row as usize;
+            }
+            (None, None) => {
+                row_idx += 1;
+                if row_idx >= pattern.len() {
+                    order_idx += 1;
+                    row_idx = 0;
+                }
             }
         }
     }
@@ -260,6 +310,24 @@ mod tests {
         assert_eq!(spec.channels, 1);
         assert_eq!(spec.bits_per_sample, 16);
         assert_eq!(spec.sample_format, hound::SampleFormat::Int);
+
+        let _ = fs::remove_file(&out);
+    }
+
+    #[test]
+    fn pattern_break_and_position_jump_do_not_panic_and_produce_audio() {
+        // jump.mod: pattern0 row0 carries D10 (BCD -> row-10 break),
+        // pattern1 row0 carries B02 (jump to order slot 2). Exercises the
+        // D/B sequencing wired into the render loop for modmill-4r0.14.
+        let bytes = fixture("jump.mod");
+        let module = crate::parser::parse(&bytes).expect("parse jump.mod");
+
+        let out = temp_path("jump");
+        render_to_wav(&module, &bytes, &out).expect("render jump.mod");
+
+        let mut reader = hound::WavReader::open(&out).expect("reopen wav");
+        assert!(reader.len() > 0, "expected non-empty audio output");
+        let _: Vec<i16> = reader.samples::<i16>().map(|s| s.expect("valid sample")).collect();
 
         let _ = fs::remove_file(&out);
     }
