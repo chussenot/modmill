@@ -58,7 +58,16 @@ internal bookkeeping, not a second bead).
 A `Monitor` polling `pact lease ls` confirmed `w3-arpeggio` had gone
 `active` on `src/engine/effects/arpeggio.rs` 19 seconds after spawn;
 the orchestrator then killed the task directly (`TaskStop`) while it
-was mid-hold. The lease was deliberately left untouched afterward
+was mid-hold. The kill landed mid-edit, not idle: the agent's own
+subagent transcript (`subagents/agent-a9722882aea29f06f.jsonl`) shows
+it had acquired the lease, read its inherited handoff, read the
+neighboring `vibrato.rs` for style, and applied one `Edit` to
+`arpeggio.rs` — the file on disk when it died had a doc-comment change
+but no real implementation yet — before its final line reads
+`[Request interrupted by user]`. Genuinely mid-hold, genuinely doing
+the work it was told to do, not stalled or looping.
+
+The lease was deliberately left untouched afterward
 (not stolen or swept) so it could age naturally through the roster's
 `LIVE` ladder — `ACTIVE` → `STALE` (past half the 45-minute default
 TTL, holding) → `DEAD` (past full TTL, reclaimable) — rather than
@@ -254,9 +263,70 @@ designed, chain and all.
 
 ### `pact audit` summary
 
-[FILLED IN: final full-run summary, stale-holds split, handoff
-coverage final numbers, gate-order (repeated above), and every other
-battery check's outcome.]
+Final numbers, end to end: 68 coordination events from 16 agent
+identities (15 subagents + orchestrator) across a 2h02m span, 33
+lease-acquires, 0 refusals (contention prevented by the linted plan,
+not resolved by arbitration), median hold 1m38s / p90 5m16s.
+
+**Liveness-aware stale-holds split — active vs silent, as asked:**
+exactly **one** stale hold in the whole run, and it is the one this
+run planted on purpose:
+
+```
+src/engine/effects/arpeggio.rs   w3-arpeggio   held 1h16m vs ttl 45m0s, ended by expired (line 44)
+```
+
+Every other of the 33 holds ended by ordinary release. `pact audit`'s
+own kinds line makes the same split visible from the raw counts:
+`acquired 33, expired 1, released 32, renewed 2` — one silent
+(expired, unrenewed) hold against 32 that closed the ordinary way, and
+2 renewals (one is `w3-vibrato`'s real renewal, the other the merge
+mutex's own internal bookkeeping). Nothing here is a mystery: the one
+stale hold is fully explained above (F1b), by name, with the exact
+kill timestamp.
+
+**Handoff coverage, final**: 8 of 14 beads-with-dependents sent —
+W1's 3/3 (100%) plus W3's 5/5 (100%, not the "partial" the brief's own
+grading section predicted; see F2 above for that divergence, named
+rather than smoothed over). The 6 silent beads (parser header/samples/
+patterns, G1, engine-core, G2) are silent by design — none of them has
+a downstream bead that needs a finding handed to it, and `pact audit`
+itself frames a bead with nothing to say sending nothing as "a smell,
+not a failure."
+
+**`--check gate-order`, `--strict`**: reports exactly the planted
+violation and nothing else (two lease-acquire events for the same
+bead, `modmill-4r0.14`, both ~9-11 minutes ahead of G2's close) —
+`--strict` exits 1, confirming this is the one and only violation a
+CI gate configured this way would catch.
+
+**Every other battery check, clean:**
+- `chain-integrity` — 72 lines chain-tracked, no gap/edit/forgery.
+- `double-win` — no overlapping hold windows, ever.
+- `retry-storm` / `silent-contention` — no refusals at all (the plan
+  prevented contention outright), so both are vacuously clean.
+- `topology --expect worktrees --allow-main orchestrator` — every
+  context-stamped event matches the declared topology.
+- `merge-divergence` — every hold started from the content the
+  previous holder left; no stale-copy edits.
+
+**Not clean, and explained rather than hidden:**
+- `commit-correlation` — **11 uncovered commits**, all
+  orchestrator-authored shared-skeleton scaffolding (the wave-2 and
+  wave-3 pre-wiring commits), made without a corresponding pact lease.
+  See "modmill bugs found," item 6.
+- `claim-lease-divergence` — **could not run**: despite
+  `BD_AUDIT_ENABLED=1` being set for the entire run and
+  `.beads/interactions.jsonl` correctly recording every `status`
+  field change (all 16 close reasons, in full, including the quoted
+  handoffs above), it recorded **zero** `assignee` field changes for
+  any of the ~16 `bd update <id> --claim` calls this run made — the
+  exact claiming convention `AGENTS.md`'s own pact-init block
+  recommends. The only `assignee` row in the file came from one manual
+  `bd update --assignee=""` test at the very start of the session. Filed
+  as **pact-6wb** (below) — this is a sharper, verified version of what
+  looked at first like "the sidecar is off"; it's on, and partially
+  works, but has a specific gap in the documented `--claim` path.
 
 ### `pact audit --json | recount testify`
 
@@ -279,6 +349,17 @@ excerpt quoted above was pulled directly from
 real gap between recount's promise and its field behavior under
 Claude Code's Agent-tool subagent shape**, filed as a bead in the pact
 repo below.
+
+The same fallback repeated for `--check stale-holds`'s one finding
+(the arpeggio expiry): `recount testify` again resolved to the
+top-level orchestrator session, this time showing the orchestrator
+mid-way through pre-wiring the shared effects skeleton at the moment
+the lease crossed its TTL — accurate (that genuinely is what the
+orchestrator was doing then) but, again, not the killed agent's own
+testimony. That testimony was pulled by hand from
+`subagents/agent-a9722882aea29f06f.jsonl` for the F1b section above:
+one `Edit` applied to `arpeggio.rs`, then `[Request interrupted by
+user]` — the kill, mid-file.
 
 ## modmill bugs found (stay in this repo)
 
@@ -345,3 +426,12 @@ repo below.
    attributes the event to the top-level orchestrator session instead
    of refusing or searching the `subagents/` directory by the agent id
    already present in the ledger event.
+3. **pact-6wb** — bd's audit sidecar records `status` field changes
+   (every close reason) correctly with `BD_AUDIT_ENABLED=1` set, but
+   never records an `assignee` field change for `bd update <id>
+   --claim` — only for a bare `--assignee=` write. Every claim in this
+   run used `--claim` (the pattern `AGENTS.md`'s own pact-init block
+   recommends), so `pact audit --check claim-lease-divergence` had no
+   usable data despite the sidecar being correctly enabled the entire
+   time — a sharper, verified version of what first looked like "the
+   sidecar is off."
