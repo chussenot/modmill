@@ -28,7 +28,7 @@ use anyhow::Context;
 use crate::parser::{Module, CHANNELS, PATTERN_DATA_OFFSET, ROWS_PER_PATTERN};
 
 mod effects;
-use effects::sequencing::{decode_pattern_break_row, decode_position_jump};
+use effects::{arpeggio, portamento, sequencing::{decode_pattern_break_row, decode_position_jump}, vibrato, volume};
 
 const SAMPLE_RATE: u32 = 44_100;
 const DEFAULT_SPEED: u32 = 6;
@@ -40,16 +40,54 @@ const AMIGA_CLOCK: f64 = 7_093_789.2;
 /// number, so it can't drift out of sync with `src/parser/patterns.rs`.
 const PATTERN_BLOCK_BYTES: usize = ROWS_PER_PATTERN * CHANNELS * 4;
 
+/// Which per-tick effect (if any) is active on a channel for the row
+/// currently playing. Set once per row from the cell's effect nibble;
+/// `None` variants (or a nibble not in W3's scope) mean "no per-tick
+/// modulation this row" -- the plain-note / F / D / B / C case.
+#[derive(Clone, Copy, Default, PartialEq)]
+enum RowEffect {
+    #[default]
+    None,
+    Arpeggio,
+    Slide,
+    TonePortamento,
+    Vibrato,
+    VolumeSlide,
+}
+
 #[derive(Clone, Copy, Default)]
 struct Channel {
     /// 0-based index into `module.samples` / the extracted PCM table.
     sample_idx: Option<usize>,
     /// Fractional read position, in sample bytes (1 byte = 1 8-bit frame).
     pos: f64,
-    /// `pos` advance per output frame: freq_hz / SAMPLE_RATE.
+    /// `pos` advance per output frame for the CURRENT tick: freq_hz / SAMPLE_RATE.
+    /// Recomputed every tick since an active effect can change the
+    /// effective period tick-by-tick.
     step: f64,
     volume: u8,
     playing: bool,
+    /// Period set by this channel's last note trigger. Arpeggio/vibrato
+    /// compute their per-tick period relative to this; it does not itself
+    /// change tick-to-tick.
+    base_period: u16,
+    /// Persistent working period for slide (1/2) and tone-portamento (3),
+    /// which mutate cumulatively tick-to-tick rather than being computed
+    /// fresh from `base_period` each time.
+    current_period: u16,
+    /// This row's active per-tick effect and its param, latched at tick 0.
+    row_effect: RowEffect,
+    row_param: u8,
+    /// `Slide` only: the raw effect nibble (1 or 2), so `portamento::slide_period`
+    /// knows the direction.
+    slide_nibble: u8,
+    /// Tone-portamento's target period (effect `3`), separate from
+    /// `row_param` since the target comes from the cell's period field.
+    tone_target: u16,
+    /// Vibrato's running sine-table index, owned by the channel so it can
+    /// be advanced in place each tick; not reset between rows (real PT
+    /// does not reset vibrato phase on a non-retriggering row).
+    vibrato_phase: u8,
 }
 
 /// Extract each of the 31 samples' raw PCM bytes from the original file.
@@ -129,9 +167,42 @@ pub fn render_to_wav(module: &Module, raw_bytes: &[u8], out: &Path) -> anyhow::R
         let mut position_jump_slot: Option<u8> = None;
 
         for (ch_i, cell) in row.iter().enumerate() {
-            // Effect handling: F (speed/tempo), D (pattern break), B (position jump).
+            let ch = &mut channels[ch_i];
+            // Per-row effect latch: cleared unless this cell sets one, so an
+            // effect never silently continues into a row that doesn't name it.
+            ch.row_effect = RowEffect::None;
+
+            // Effect handling. F/D/B are row-level and immediate (tick 0);
+            // C (set volume) is also immediate. The rest are per-tick and
+            // only latched here -- applied starting tick 1 in the mix loop
+            // below, per the inherited effect-timing handoff.
             match cell.effect {
                 0x0 if cell.param == 0 => {} // no effect present
+                0x0 => {
+                    ch.row_effect = RowEffect::Arpeggio;
+                    ch.row_param = cell.param;
+                }
+                0x1 | 0x2 => {
+                    ch.row_effect = RowEffect::Slide;
+                    ch.row_param = cell.param;
+                    ch.slide_nibble = cell.effect;
+                }
+                0x3 => {
+                    ch.row_effect = RowEffect::TonePortamento;
+                    ch.row_param = cell.param;
+                    if cell.period != 0 {
+                        ch.tone_target = cell.period;
+                    }
+                }
+                0x4 => {
+                    ch.row_effect = RowEffect::Vibrato;
+                    ch.row_param = cell.param;
+                }
+                0xA => {
+                    ch.row_effect = RowEffect::VolumeSlide;
+                    ch.row_param = cell.param;
+                }
+                0xC => ch.volume = volume::set(cell.param),
                 0xF => {
                     if cell.param < 0x20 {
                         speed = cell.param as u32;
@@ -153,72 +224,121 @@ pub fn render_to_wav(module: &Module, raw_bytes: &[u8], out: &Path) -> anyhow::R
                 }
             }
 
-            // Note trigger: only when a period is present.
-            if cell.period != 0 {
+            // Note trigger: only when a period is present. Tone-portamento
+            // (3) uses the cell's period as a *target*, not a trigger --
+            // real ProTracker glides toward it without retriggering the
+            // sample.
+            if cell.period != 0 && cell.effect != 0x3 {
                 let instrument = if cell.sample != 0 {
                     Some(cell.sample as usize)
                 } else {
-                    channels[ch_i].sample_idx.map(|i| i + 1)
+                    ch.sample_idx.map(|i| i + 1)
                 };
                 if let Some(instr) = instrument
                     && instr >= 1
                     && instr <= module.samples.len()
                     && !pcm[instr - 1].is_empty()
                 {
-                    let freq = AMIGA_CLOCK / (cell.period as f64 * 2.0);
-                    channels[ch_i] = Channel {
-                        sample_idx: Some(instr - 1),
-                        pos: 0.0,
-                        step: freq / SAMPLE_RATE as f64,
-                        volume: module.samples[instr - 1].volume,
-                        playing: true,
-                    };
+                    ch.sample_idx = Some(instr - 1);
+                    ch.pos = 0.0;
+                    ch.base_period = cell.period;
+                    ch.current_period = cell.period;
+                    ch.step = (AMIGA_CLOCK / (cell.period as f64 * 2.0)) / SAMPLE_RATE as f64;
+                    ch.volume = module.samples[instr - 1].volume;
+                    ch.playing = true;
+                    ch.vibrato_phase = 0;
                 }
             }
         }
 
-        // Row duration: `speed` ticks at `2.5 / bpm` seconds/tick.
-        let row_seconds = speed as f64 * (2.5 / bpm);
-        elapsed_target += row_seconds;
-        let target_frames = (elapsed_target * SAMPLE_RATE as f64).round() as u64;
-        let frames_this_row = target_frames.saturating_sub(frames_emitted);
-        frames_emitted = target_frames;
-
-        for _ in 0..frames_this_row {
-            let mut mixed: i32 = 0;
-            for ch in channels.iter_mut() {
-                if !ch.playing {
-                    continue;
-                }
-                let Some(si) = ch.sample_idx else {
-                    continue;
-                };
-                let data = &pcm[si];
-                let i0 = ch.pos.floor() as usize;
-                if data.is_empty() || i0 >= data.len() {
-                    ch.playing = false;
-                    continue;
-                }
-                let frac = ch.pos - i0 as f64;
-                let s0 = data[i0] as f64;
-                let s1 = if i0 + 1 < data.len() { data[i0 + 1] as f64 } else { s0 };
-                let interp = s0 + (s1 - s0) * frac;
-                let amp = interp * (ch.volume as f64 / 64.0) * 256.0;
-                mixed += amp.round() as i32;
-
-                ch.pos += ch.step;
-                let sample = &module.samples[si];
-                if sample.loop_len_bytes > 0 {
-                    let loop_end = (sample.loop_start_bytes + sample.loop_len_bytes) as f64;
-                    while ch.pos >= loop_end {
-                        ch.pos -= sample.loop_len_bytes as f64;
+        // Row duration: `speed` ticks at `2.5 / bpm` seconds/tick, mixed one
+        // tick at a time so a per-tick effect can change pitch/volume
+        // mid-row (starting tick 1, per the inherited handoff).
+        let tick_seconds = 2.5 / bpm;
+        for tick in 0..speed {
+            if tick >= 1 {
+                for ch in channels.iter_mut() {
+                    if !ch.playing {
+                        continue;
                     }
-                } else if ch.pos >= data.len() as f64 {
-                    ch.playing = false;
+                    let effective_period = match ch.row_effect {
+                        RowEffect::None => ch.current_period,
+                        RowEffect::Arpeggio => {
+                            arpeggio::period_for_tick(ch.base_period, ch.row_param, tick)
+                        }
+                        RowEffect::Slide => {
+                            ch.current_period =
+                                portamento::slide_period(ch.current_period, ch.row_param, ch.slide_nibble);
+                            ch.current_period
+                        }
+                        RowEffect::TonePortamento => {
+                            ch.current_period = portamento::tone_portamento_step(
+                                ch.current_period,
+                                ch.tone_target,
+                                ch.row_param,
+                            );
+                            ch.current_period
+                        }
+                        RowEffect::Vibrato => {
+                            let offset =
+                                vibrato::period_offset_for_tick(ch.row_param, &mut ch.vibrato_phase);
+                            (ch.base_period as i32 + offset as i32).clamp(1, u16::MAX as i32) as u16
+                        }
+                        RowEffect::VolumeSlide => {
+                            ch.volume = volume::slide(ch.volume, ch.row_param);
+                            ch.current_period
+                        }
+                    };
+                    if effective_period != 0 {
+                        let freq = AMIGA_CLOCK / (effective_period as f64 * 2.0);
+                        ch.step = freq / SAMPLE_RATE as f64;
+                    }
                 }
             }
-            let clamped = mixed.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
-            writer.write_sample(clamped)?;
+            // Tick 0 needs no recompute: the trigger handling above already
+            // set `step` from the note's base period.
+
+            elapsed_target += tick_seconds;
+            let target_frames = (elapsed_target * SAMPLE_RATE as f64).round() as u64;
+            let frames_this_tick = target_frames.saturating_sub(frames_emitted);
+            frames_emitted = target_frames;
+
+            for _ in 0..frames_this_tick {
+                let mut mixed: i32 = 0;
+                for ch in channels.iter_mut() {
+                    if !ch.playing {
+                        continue;
+                    }
+                    let Some(si) = ch.sample_idx else {
+                        continue;
+                    };
+                    let data = &pcm[si];
+                    let i0 = ch.pos.floor() as usize;
+                    if data.is_empty() || i0 >= data.len() {
+                        ch.playing = false;
+                        continue;
+                    }
+                    let frac = ch.pos - i0 as f64;
+                    let s0 = data[i0] as f64;
+                    let s1 = if i0 + 1 < data.len() { data[i0 + 1] as f64 } else { s0 };
+                    let interp = s0 + (s1 - s0) * frac;
+                    let amp = interp * (ch.volume as f64 / 64.0) * 256.0;
+                    mixed += amp.round() as i32;
+
+                    ch.pos += ch.step;
+                    let sample = &module.samples[si];
+                    if sample.loop_len_bytes > 0 {
+                        let loop_end = (sample.loop_start_bytes + sample.loop_len_bytes) as f64;
+                        while ch.pos >= loop_end {
+                            ch.pos -= sample.loop_len_bytes as f64;
+                        }
+                    } else if ch.pos >= data.len() as f64 {
+                        ch.playing = false;
+                    }
+                }
+                let clamped = mixed.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+                writer.write_sample(clamped)?;
+            }
         }
 
         // Advance to the next row, honoring any D/B decided on this row.
