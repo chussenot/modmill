@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      # fixtures/*.mod are committed to the repo and tests/tiny_mod.rs
+      # doesn't need external data either -- no download step here, by design.
+      - name: Build
+        run: cargo build --verbose
+      - name: Test
+        run: cargo test --verbose
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
