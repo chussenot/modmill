@@ -20,3 +20,4 @@
 
 # per-agent worktree checkouts (transient, merged branches are the record)
 .claude/worktrees/
+testdata/
