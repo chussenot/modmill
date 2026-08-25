@@ -2,3 +2,5 @@
 # rather than stopping for a human who has nothing to decide.
 .pact/events.jsonl merge=union
 .pact/messages.jsonl merge=union
+
+*.mod binary

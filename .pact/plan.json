@@ -1,0 +1,81 @@
+{
+  "at": "2026-08-25T10:42:25.658263170+00:00",
+  "edges": {
+    "modmill-4r0.1": [],
+    "modmill-4r0.10": [
+      "modmill-4r0.9"
+    ],
+    "modmill-4r0.11": [
+      "modmill-4r0.9"
+    ],
+    "modmill-4r0.12": [
+      "modmill-4r0.9"
+    ],
+    "modmill-4r0.13": [
+      "modmill-4r0.9"
+    ],
+    "modmill-4r0.14": [
+      "modmill-4r0.9"
+    ],
+    "modmill-4r0.15": [
+      "modmill-4r0.10",
+      "modmill-4r0.11",
+      "modmill-4r0.12",
+      "modmill-4r0.13",
+      "modmill-4r0.14"
+    ],
+    "modmill-4r0.16": [
+      "modmill-4r0.10",
+      "modmill-4r0.11",
+      "modmill-4r0.12",
+      "modmill-4r0.13",
+      "modmill-4r0.14"
+    ],
+    "modmill-4r0.2": [],
+    "modmill-4r0.3": [],
+    "modmill-4r0.4": [
+      "modmill-4r0.1",
+      "modmill-4r0.3"
+    ],
+    "modmill-4r0.5": [
+      "modmill-4r0.1"
+    ],
+    "modmill-4r0.6": [
+      "modmill-4r0.3",
+      "modmill-4r0.2"
+    ],
+    "modmill-4r0.7": [
+      "modmill-4r0.4",
+      "modmill-4r0.5",
+      "modmill-4r0.6"
+    ],
+    "modmill-4r0.8": [
+      "modmill-4r0.7"
+    ],
+    "modmill-4r0.9": [
+      "modmill-4r0.8"
+    ]
+  },
+  "waves": {
+    "modmill-4r0.1": 0,
+    "modmill-4r0.10": 5,
+    "modmill-4r0.11": 5,
+    "modmill-4r0.12": 5,
+    "modmill-4r0.13": 5,
+    "modmill-4r0.14": 5,
+    "modmill-4r0.15": 6,
+    "modmill-4r0.16": 6,
+    "modmill-4r0.2": 0,
+    "modmill-4r0.3": 0,
+    "modmill-4r0.4": 1,
+    "modmill-4r0.5": 1,
+    "modmill-4r0.6": 1,
+    "modmill-4r0.7": 2,
+    "modmill-4r0.8": 3,
+    "modmill-4r0.9": 4
+  },
+  "gates": [
+    "modmill-4r0.7",
+    "modmill-4r0.9"
+  ]
+}

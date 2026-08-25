@@ -6,7 +6,14 @@
 .beads/proxieddb/
 
 # Everything pact or an agent writes under .pact/ is local runtime state,
-# EXCEPT the two append-only logs below, which are history and belong in git.
+# EXCEPT the append-only logs and the linted plan snapshot below, which are
+# history and belong in git.
 .pact/*
 !.pact/events.jsonl
 !.pact/messages.jsonl
+!.pact/plan.json
+
+
+# Added by cargo
+
+/target
