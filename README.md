@@ -26,6 +26,38 @@ Render a module to a WAV file:
 $ modmill render fixtures/effects.mod -o out.wav
 ```
 
+## Collecting and playing real-world modules
+
+`fixtures/*.mod` are synthetic (see `fixtures/ATTRIBUTION.md`) and are the
+committed conformance suite — CI never downloads anything. To hear modmill
+against real music instead, `scripts/fetch-mods.sh` pulls public-domain
+ProTracker modules from The Mod Archive into `testdata/mods/` (gitignored:
+real test data, not a fixture):
+
+```
+$ scripts/fetch-mods.sh discover 4      # auto-harvest 4 public-domain M.K. modules
+# or, to pick specific ones by hand: fill in the MODS array at the top of
+# the script (moduleid|filename|title|author|license-url), then just run
+# scripts/fetch-mods.sh with no arguments.
+```
+
+Each download is verified as a 4-channel `M.K.` module from its own bytes
+(not from site markup, which the script's header explains was tried first
+and proved unreliable), smoke-tested through `modmill parse`, and recorded
+with its title, source URL and sha256 in `testdata/mods/ATTRIBUTION.md`.
+
+Then render and play it with whatever WAV player you have — `aplay`
+(ALSA, Linux) or `mpv` both just work on a plain PCM WAV:
+
+```
+$ cargo run --release -- render testdata/mods/modarchive-32703.mod -o /tmp/song.wav
+$ aplay /tmp/song.wav        # or: mpv /tmp/song.wav
+```
+
+(`--release` matters here — the mixer's linear-interpolation resampling is
+fast enough in release mode to render in a fraction of a second; a debug
+build works too, just slower.)
+
 ## Scope: implemented effects
 
 Effects are applied per-tick, per ProTracker's documented tick timing:
@@ -67,7 +99,9 @@ stderr, per `docs/spec.md`:
   itself generally ignores this byte.
 - **Vibrato/tremolo waveform retrigger**: an explicit "retrigger vibrato
   waveform" effect exists in real PT but is out of scope here; modmill's
-  vibrato phase only resets on note trigger (see divergence note below).
+  vibrato phase is carried across a plain retrigger instead (matching
+  authentic PT — see `modmill-89e`), so only that dedicated effect would
+  ever reset it.
 - **Sample flags/fields beyond name, length, finetune, volume, and loop
   start/length**: any other malformed or out-of-range sample data (e.g. a
   loop region exceeding the declared sample length) is clamped rather than
@@ -96,12 +130,12 @@ claimed, or from what a naive reading would suggest:
   the down-nibble is silently ignored, matching authentic ProTracker.
 - **Vibrato (`4`)**: implemented with a simpler 32-entry full-cycle signed
   sine table (rather than the doc's 64-position mirrored-quarter+sign-bit
-  scheme) — functionally equivalent, same peak amplitude. Also: `src/engine/mod.rs`
-  resets vibrato phase on every note trigger, which diverges from
+  scheme) — functionally equivalent, same peak amplitude. `src/engine/mod.rs`
+  originally reset vibrato phase on every note trigger, diverging from
   `effect-timing.md` §6's claim that authentic PT does *not* reset phase on
-  a plain new note. This is pre-existing engine code, out of the vibrato
-  bead's scope, but will affect conformance if a golden hash is ever
-  pinned for `effects.mod`.
+  a plain new note; fixed post-run (`modmill-89e`) — phase now carries
+  across a plain retrigger, with a regression test built from a synthetic
+  `Module` guarding against the reset coming back.
 - **Portamento (`1`/`2`/`3`)**: the docs describe the per-tick slide math
   but say nothing about bounds. modmill clamps slid periods to the
   canonical Amiga period-table extremes `[113, 856]` to avoid underflow or
