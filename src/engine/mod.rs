@@ -246,7 +246,12 @@ pub fn render_to_wav(module: &Module, raw_bytes: &[u8], out: &Path) -> anyhow::R
                     ch.step = (AMIGA_CLOCK / (cell.period as f64 * 2.0)) / SAMPLE_RATE as f64;
                     ch.volume = module.samples[instr - 1].volume;
                     ch.playing = true;
-                    ch.vibrato_phase = 0;
+                    // vibrato_phase deliberately NOT reset here: real
+                    // ProTracker does not reset the vibrato sine-table
+                    // position on a plain new note (docs/format-notes/
+                    // effect-timing.md §6) -- only an explicit "retrigger
+                    // vibrato waveform" effect would, and that's out of
+                    // scope for modmill. modmill-89e.
                 }
             }
         }
@@ -370,6 +375,7 @@ pub fn render_to_wav(module: &Module, raw_bytes: &[u8], out: &Path) -> anyhow::R
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parser::{Cell, Header, Sample};
     use std::fs;
 
     fn fixture(name: &str) -> Vec<u8> {
@@ -379,6 +385,89 @@ mod tests {
 
     fn temp_path(name: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!("modmill-engine-test-{name}-{}.wav", std::process::id()))
+    }
+
+    /// A one-sample, one-pattern `Module` (built directly, no file needed)
+    /// plus matching `raw_bytes` for `extract_pcm` -- everything before
+    /// the PCM payload is unused filler, since `render_to_wav` reads
+    /// pattern/sample structure from `module`, not by re-parsing `bytes`.
+    fn synthetic_module(rows: Vec<[Cell; CHANNELS]>) -> (Module, Vec<u8>) {
+        let pcm: Vec<i8> = (0..64).map(|i: i32| ((i * 5) % 256 - 128) as i8).collect();
+        let module = Module {
+            header: Header { name: "synthetic".into(), song_length: 1, restart_position: 0, order: vec![0] },
+            samples: vec![Sample {
+                name: "s".into(),
+                length_bytes: pcm.len() as u32,
+                finetune: 0,
+                volume: 64,
+                loop_start_bytes: 0,
+                // Looped across its whole length so it keeps sounding for
+                // the entire row (a one-shot sample this short exhausts
+                // within tick 0, before vibrato -- ticks 1+ -- ever gets a
+                // chance to influence pitch, which would make this test
+                // pass for the wrong reason).
+                loop_len_bytes: pcm.len() as u32,
+            }],
+            patterns: vec![rows],
+        };
+        let pattern_bytes = module.patterns.len() * PATTERN_BLOCK_BYTES;
+        let mut raw = vec![0u8; PATTERN_DATA_OFFSET + pattern_bytes];
+        raw.extend(pcm.iter().map(|&b| b as u8));
+        (module, raw)
+    }
+
+    fn render_bytes(module: &Module, raw: &[u8], name: &str) -> Vec<u8> {
+        let out = temp_path(name);
+        render_to_wav(module, raw, &out).expect("render");
+        let bytes = fs::read(&out).expect("read rendered wav");
+        let _ = fs::remove_file(&out);
+        bytes
+    }
+
+    fn vibrato_cell() -> Cell {
+        // period 428 (C-3-ish), sample 1, effect 4 (vibrato), param 0x1F:
+        // speed=1 (phase advances by 1/tick, slow enough not to wrap
+        // within one row's ticks), depth=15 (max, so the offset is easy
+        // to tell apart from silence/no-modulation).
+        Cell { sample: 1, period: 428, effect: 0x4, param: 0x1F }
+    }
+
+    #[test]
+    fn vibrato_phase_is_not_reset_on_a_plain_new_note() {
+        // modmill-89e: real ProTracker does not reset the vibrato phase
+        // on a plain retrigger (docs/format-notes/effect-timing.md §6).
+        // With speed=1 the phase advances by 1 each tick and default
+        // speed=6 gives 5 modulated ticks/row (ticks 1..=5), so row 2 of
+        // a two-row vibrato pattern starts at phase 5, not phase 0.
+        //
+        // Regression shape: render a single vibrato row alone (always
+        // starts at phase 0) and compare it against the SECOND row of a
+        // two-row vibrato pattern. If phase were wrongly reset on each
+        // trigger, both rows would start from phase 0 and their audio
+        // would be byte-identical; with phase correctly carried over,
+        // they must differ.
+        let one_row: [Cell; CHANNELS] = [vibrato_cell(), Cell::default(), Cell::default(), Cell::default()];
+        let (single_module, single_raw) = synthetic_module(vec![one_row]);
+        let single_wav = render_bytes(&single_module, &single_raw, "vib-single");
+
+        let (two_module, two_raw) = synthetic_module(vec![one_row, one_row]);
+        let two_wav = render_bytes(&two_module, &two_raw, "vib-two");
+
+        // Row length in bytes of PCM data within the WAV: PAL default
+        // speed=6, bpm=125 -> 6 * (2.5/125) = 0.12s/row -> round(0.12 *
+        // 44100) = 5292 frames/row * 2 bytes/frame (16-bit mono).
+        const ROW_FRAMES: usize = 5292;
+        const ROW_BYTES: usize = ROW_FRAMES * 2;
+
+        let single_row_pcm = &single_wav[single_wav.len() - ROW_BYTES..];
+        let two_wav_row2_pcm = &two_wav[two_wav.len() - ROW_BYTES..];
+
+        assert_ne!(
+            single_row_pcm, two_wav_row2_pcm,
+            "row 2 of a retriggered vibrato note must differ from a fresh \
+             single row -- if this fails, vibrato_phase is being reset on \
+             note trigger again (modmill-89e regressed)"
+        );
     }
 
     #[test]
