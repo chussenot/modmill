@@ -126,7 +126,7 @@ bd prime                # Refresh Beads context
 **Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
 <!-- END BEADS CODEX SETUP -->
 
-<!-- pact:begin hash:aa5591a1 -->
+<!-- pact:begin hash:3da0f228 -->
 ## pact coordination protocol
 
 pact coordinates multiple coding agents working in this repository. Follow
@@ -284,6 +284,19 @@ this protocol whenever you touch shared files or hand off work to others.
   written 38 minutes after the first of them parked, and reached the NEXT
   cohort's spawn prompt only. One of those four was holding four finished fixes,
   two of them repaired regressions.
+- **Gates are beads, and they are visible in `bd` like any other.** Before you
+  claim into a new wave, check that the prior wave's gates have closed. pact will
+  not stop you — no acquire is ever refused on gate grounds — but `pact audit
+  --check gate-order` reads the ledger either way, and a start it finds ahead of a
+  gate is a question somebody will ask afterwards.
+- **Read your inheritance before you start a claimed bead**: `pact msg thread
+  bead:<id>`. Whoever finished what yours depends on may have left findings there
+  — addressed to the bead rather than to you, because when they wrote it you did
+  not exist yet. It is usually the cheapest thing you will read all session.
+- **When you close a bead that has dependents, send a handoff**: `pact handoff
+  <bead> --confidence high|medium|low --findings "<what you found>"`. Findings you
+  would want waiting for you. It never blocks and nothing waits on it; a bead with
+  nothing worth saying should send nothing.
 - **Orient with `pact log`**: one chronological feed of who leased what and
   who said what. Read it when you join, and when you need to know whether a
   peer is still moving.
