@@ -49,8 +49,13 @@ pub struct Module {
     pub patterns: Vec<Pattern>,
 }
 
-/// Byte offset of the "M.K." tag: 20 (name) + 31 * 30 (sample headers).
-pub const TAG_OFFSET: usize = 20 + SAMPLE_COUNT * 30;
+/// Byte offset of the "M.K." tag: 20 (name) + 31 * 30 (sample headers)
+/// + 1 (song length) + 1 (restart position) + 128 (order table).
+///
+/// Caught independently by w2-header and w2-patterns during wave 2: an
+/// earlier version of this constant omitted the song-length/restart/
+/// order-table bytes and pointed at offset 950 instead of 1080.
+pub const TAG_OFFSET: usize = 20 + SAMPLE_COUNT * 30 + 1 + 1 + 128;
 /// Byte offset where pattern data begins: tag offset + 4-byte tag.
 pub const PATTERN_DATA_OFFSET: usize = TAG_OFFSET + 4;
 
